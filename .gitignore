@@ -1,0 +1,7 @@
+.env
+.streamlit/secrets.toml
+seed_state.json
+tick.log
+__pycache__/
+*.pyc
+images_potok/
