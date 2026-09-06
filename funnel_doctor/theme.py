@@ -68,13 +68,10 @@ CSS-подбор. Проще и надёжнее убрать саму возм�
     padding-top: 36px !important;
 }}
 
-/* Большой пустой блок сверху сайдбара — это stSidebarHeader (шапка с кнопкой
-сворачивания), а не padding контента. Схлопываем её и задаём отступ на самом
-контенте (имена testid проверены в установленном пакете streamlit==1.62.0). */
+/* stSidebarHeader раньше держал кнопку сворачивания — та теперь скрыта
+(см. выше), сам блок больше не нужен и просто съедает высоту сверху. */
 [data-testid="stSidebarHeader"] {{
-    min-height: 0 !important;
-    height: auto !important;
-    padding: 8px 0 0 0 !important;
+    display: none !important;
 }}
 
 [data-testid="stSidebar"] > div,
@@ -82,6 +79,7 @@ CSS-подбор. Проще и надёжнее убрать саму возм�
 [data-testid="stSidebarContent"],
 [data-testid="stSidebar"] .block-container {{
     padding-top: 36px !important;
+    margin-top: 0 !important;
 }}
 
 h1, h2, h3 {{

@@ -44,10 +44,21 @@ PREP_TOOL = {
                     "type": "object",
                     "properties": {
                         "competency": {"type": "string"},
-                        "question": {"type": "string"},
-                        "follow_up": {"type": "string", "description": "Уточняющий вопрос на типичный уклончивый ответ."},
+                        "items": {
+                            "type": "array",
+                            "minItems": 3,
+                            "maxItems": 5,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "question": {"type": "string"},
+                                    "follow_up": {"type": "string", "description": "Уточняющий вопрос на типичный уклончивый ответ."},
+                                },
+                                "required": ["question", "follow_up"],
+                            },
+                        },
                     },
-                    "required": ["competency", "question", "follow_up"],
+                    "required": ["competency", "items"],
                 },
             },
         },
@@ -60,9 +71,13 @@ SYSTEM_PROMPT = """Ты помогаешь интервьюеру подгото
 на основе ИСТОРИИ ВЗАИМОДЕЙСТВИЙ (комментарии рекрутера, прошлые интервью) — только то, что
 реально там написано, ничего не выдумывай. Если истории по компетенции нет — статус "unknown"
 и evidence "нет данных в истории", а не догадка.
-Вопросы задавай только под компетенции со статусом "partial" или "unknown" — то, что уже
-"confirmed", повторно спрашивать незачем. follow_up — конкретный уточняющий вопрос на
-вероятный уклончивый ответ, не общая фраза вроде "расскажите подробнее".
+Вопросы готовь только под компетенции со статусом "partial" или "unknown" — то, что уже
+"confirmed", повторно спрашивать незачем. На каждую такую компетенцию дай от 3 до 5 вопросов —
+конкретное число зависит от того, насколько широкая и критичная это компетенция для роли
+(узкая/второстепенная — 3, широкая/ключевая для позиции — 5), вопросы должны раскрывать
+компетенцию с разных сторон (не переформулировки одного и того же), без повторов. У каждого
+вопроса — свой follow_up: конкретный уточняющий вопрос на вероятный уклончивый ответ, а не
+общая фраза вроде "расскажите подробнее".
 Это материал для подготовки интервьюера, а не готовое решение о найме."""
 
 
@@ -112,7 +127,7 @@ def prepare_interview(config: Config, client: PotokClient, job_id: int, applican
     return InterviewPrep(
         summary=parsed.get("summary") or "Недостаточно данных для содержательной подготовки.",
         competencies=_normalize_list(parsed.get("competencies", []), ("name", "status", "evidence")),
-        questions=_normalize_list(parsed.get("questions", []), ("competency", "question", "follow_up")),
+        questions=_normalize_questions(parsed.get("questions", [])),
         current_stage=evidence["current_stage"],
     )
 
@@ -161,4 +176,42 @@ def _normalize_list(raw: Any, keys: tuple[str, ...]) -> list[dict[str, Any]]:
             normalized.append({k: item.get(k) or "" for k in keys})
         else:
             normalized.append({keys[0]: str(item), **{k: "" for k in keys[1:]}})
+    return normalized
+
+
+def _normalize_questions(raw: Any) -> list[dict[str, Any]]:
+    """[{"competency": str, "items": [{"question": str, "follow_up": str}, ...]}, ...] —
+    защита от тех же капризов модели, что и в hypotheses.py: строка вместо
+    массива, голая строка вместо объекта, отсутствующие поля."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    if not isinstance(raw, list):
+        return []
+
+    normalized = []
+    for group in raw:
+        if not isinstance(group, dict):
+            continue
+        competency = group.get("competency") or ""
+        items_raw = group.get("items", [])
+        if isinstance(items_raw, str):
+            try:
+                items_raw = json.loads(items_raw)
+            except (json.JSONDecodeError, TypeError):
+                items_raw = []
+        if not isinstance(items_raw, list):
+            items_raw = []
+
+        items = []
+        for item in items_raw:
+            if isinstance(item, dict):
+                items.append({"question": item.get("question") or "", "follow_up": item.get("follow_up") or ""})
+            else:
+                items.append({"question": str(item), "follow_up": ""})
+
+        if competency and items:
+            normalized.append({"competency": competency, "items": items})
     return normalized

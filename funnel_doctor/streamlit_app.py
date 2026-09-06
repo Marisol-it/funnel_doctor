@@ -16,7 +16,7 @@ from funnel_doctor.config import Config
 from funnel_doctor.hypotheses import diagnose
 from funnel_doctor.potok_client import PotokClient
 
-st.set_page_config(page_title="Recruitment Funnel Doctor", page_icon="🩺", layout="wide")
+st.set_page_config(page_title="Дашборд воронок подбора", page_icon="🩺", layout="wide")
 
 
 def check_password() -> bool:
@@ -29,7 +29,7 @@ def check_password() -> bool:
         st.session_state["authenticated"] = True
         return True
 
-    st.title("🩺 Recruitment Funnel Doctor")
+    st.title("Дашборд воронок подбора")
     password = st.text_input("Пароль", type="password")
     if st.button("Войти"):
         if password == expected:
@@ -57,19 +57,27 @@ def cached_job_metrics(_config: Config, job_id: int) -> metrics.JobMetrics:
         return metrics.compute_job_metrics(client, job_id)
 
 
+# Этапы, для которых имеет смысл готовиться к интервью — само интервью и всё,
+# что ему предшествует. После interview_client готовиться уже не к чему:
+# кандидат либо на согласовании оффера, либо принят.
+PRE_INTERVIEW_STAGE_TYPES = {"applied", "sourced", "screening", "interview_hr", "interview_client"}
+
+
 @st.cache_data(ttl=300)
 def cached_job_candidates(_config: Config, job_id: int) -> list[dict]:
-    """Активные кандидаты вакансии с именами — ajs_joins не отдают имя,
-    поэтому дозапрашиваем карточку по каждому (то же самое N+1, что и в
-    compute_job_metrics, но для интерфейса выбора кандидата это ок)."""
+    """Активные кандидаты вакансии на этапах интервью и раньше — ajs_joins
+    не отдают имя, поэтому дозапрашиваем карточку по каждому (то же самое
+    N+1, что и в compute_job_metrics, но для интерфейса выбора это ок)."""
     with PotokClient(_config) as client:
         candidates = []
         for ajs in api.list_ajs_joins(client, job_id):
             if not ajs.get("active", True):
                 continue
+            stage_type = (ajs.get("stage") or {}).get("stage_type")
+            if stage_type not in PRE_INTERVIEW_STAGE_TYPES:
+                continue
             applicant = api.get_applicant(client, ajs["applicant_id"])
             name = f"{applicant.get('first_name', '')} {applicant.get('last_name', '')}".strip()
-            stage_type = (ajs.get("stage") or {}).get("stage_type")
             candidates.append({"applicant_id": ajs["applicant_id"], "name": name or f"#{ajs['applicant_id']}", "stage_type": stage_type})
         return candidates
 
@@ -77,7 +85,7 @@ def cached_job_candidates(_config: Config, job_id: int) -> list[dict]:
 
 
 def render_dashboard(config: Config) -> None:
-    st.title("🩺 Recruitment Funnel Doctor")
+    st.title("Дашборд воронок подбора")
     st.caption("Наблюдает за воронкой найма через API Потока и сам находит проблемные вакансии")
 
     jobs = cached_jobs(config)
@@ -247,7 +255,7 @@ def render_interview_prep(config: Config) -> None:
 
     candidates = cached_job_candidates(config, job_id)
     if not candidates:
-        st.info("На этой вакансии нет активных кандидатов.")
+        st.info("На этой вакансии нет активных кандидатов на этапах интервью и раньше.")
         return
 
     candidate_by_id = {c["applicant_id"]: c for c in candidates}
@@ -278,15 +286,19 @@ def render_interview_prep_result(prep: interview_prep.InterviewPrep) -> None:
             st.markdown(f"**{c['name']}** — {COMPETENCY_STATUS_LABEL.get(c['status'], c['status'])}")
             st.caption(c["evidence"])
 
-    if prep.questions:
+    groups_with_items = [g for g in prep.questions if g.get("items")]
+    if groups_with_items:
         st.subheader("Вопросы к интервью")
-        for q in prep.questions:
+        for group in groups_with_items:
             with st.container(border=True):
-                st.markdown(f"**{q['competency']}**")
-                st.markdown(f"❓ {q['question']}")
-                st.caption(f"↳ Follow-up: {q['follow_up']}")
-    else:
+                st.markdown(f"**{group.get('competency', '')}**")
+                for i, q in enumerate(group["items"], start=1):
+                    st.markdown(f"{i}. ❓ {q.get('question', '')}")
+                    st.caption(f"↳ Follow-up: {q.get('follow_up', '')}")
+    elif not prep.questions:
         st.info("Все ключевые компетенции уже подтверждены историей — дополнительных вопросов не требуется.")
+    else:
+        st.warning("Модель не смогла сформировать вопросы в этом прогоне — нажмите «Подготовить интервью» ещё раз.")
 
 
 def main() -> None:
@@ -299,7 +311,6 @@ def main() -> None:
     # индикатор рендерится через несколько вложенных div с нестабильными
     # автогенерируемыми классами — его невозможно надёжно спрятать через CSS.
     # У кнопки такого индикатора нет в принципе.
-    st.sidebar.markdown("**Раздел**")
     nav_icons = {
         "Дашборд": "dashboard",
         "Вакансия": "work",
